@@ -128,6 +128,13 @@ app.post('/call-status', async (req, res) => {
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
   if (!from) return res.status(400).send('Missing caller number');
 
+  // Skip if this caller already left a voicemail
+  const convo = conversations[from];
+  if (convo && convo.type === 'voicemail') {
+    console.log(`ℹ️ Skipping constant follow-up for ${from} because voicemail already handled`);
+    return res.status(200).send('Voicemail already handled');
+  }
+
   if (['no-answer', 'busy'].includes(callStatus)) {
     try {
       const introMsg = `G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
@@ -135,7 +142,7 @@ app.post('/call-status', async (req, res) => {
 
       conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false };
 
-      // Constant follow-up only for missed calls
+      // Constant follow-up only for normal missed calls
       await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
 
       console.log(`✅ Missed call handled for ${from}`);
