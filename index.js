@@ -57,43 +57,29 @@ function isValidAUSMobile(phone) {
   return /^\+61[0-9]{9}$/.test(phone);
 }
 
-// Memory store for ongoing conversations (for demo purposes)
-const conversations = {};
+const conversations = {}; // memory store for ongoing conversations
+
+function parseTime(text) {
+  const match = text.match(/(\b([1-3]|1[0-2]):?([0-5][0-9])?\s?(am|pm)?\b)/i);
+  if (match) return match[0];
+  return null;
+}
 
 // ========== ROUTES ==========
 
 // Onboarding SMS
 app.post('/send-sms', smsLimiter, async (req, res) => {
   const { name, phone } = req.body;
-  console.log('📩 Signup request received:', { name, phone });
-
   if (!phone) return res.status(400).send('Phone number required');
-
   const formattedPhone = formatPhone(phone);
-  if (!isValidAUSMobile(formattedPhone)) {
-    return res.status(400).send('Invalid Australian mobile number');
-  }
+  if (!isValidAUSMobile(formattedPhone)) return res.status(400).send('Invalid Australian mobile number');
 
   try {
     const assistantNumber = process.env.TWILIO_PHONE;
 
-    await client.messages.create({
-      body: `⚡️Hi ${name}, your 24/7 assistant is now active ✅`,
-      from: assistantNumber,
-      to: formattedPhone,
-    });
-
-    await client.messages.create({
-      body: `📲 Please forward your mobile number to ${assistantNumber} so we can handle missed calls.`,
-      from: assistantNumber,
-      to: formattedPhone,
-    });
-
-    await client.messages.create({
-      body: `Tip: Set forwarding to "When Busy" or "When Unanswered". You're all set ⚡️`,
-      from: assistantNumber,
-      to: formattedPhone,
-    });
+    await client.messages.create({ body: `⚡️Hi ${name}, your 24/7 assistant is now active ✅`, from: assistantNumber, to: formattedPhone });
+    await client.messages.create({ body: `📲 Please forward your mobile number to ${assistantNumber} so we can handle missed calls.`, from: assistantNumber, to: formattedPhone });
+    await client.messages.create({ body: `Tip: Set forwarding to "When Busy" or "When Unanswered". You're all set ⚡️`, from: assistantNumber, to: formattedPhone });
 
     console.log(`✅ Onboarding SMS sent to ${formattedPhone}`);
     res.status(200).json({ success: true });
@@ -108,24 +94,15 @@ app.post('/call-status', async (req, res) => {
   const callStatus = req.body.CallStatus;
   const from = formatPhone(req.body.From || '');
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
-
   if (!from) return res.status(400).send('Missing caller number');
 
   if (['no-answer', 'busy'].includes(callStatus)) {
     try {
-      const introMsg = `👷 The tradie is busy right now. Please reply with your *name* and whether you’re after a quote, booking, or something else.`;
-
+      const introMsg = `👷 The tradie is busy. Reply with your *name* and whether you want a quote, booking, or other.`;
       await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
+      await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant is asking for details.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
 
-      await client.messages.create({
-        body: `⚠️ Missed call from ${from}. Assistant is asking for details.`,
-        from: process.env.TWILIO_PHONE,
-        to: tradieNumber
-      });
-
-      // Initialize conversation memory
       conversations[from] = { step: 'awaiting_details' };
-
       console.log(`✅ Missed call handled for ${from}`);
     } catch (err) {
       console.error('❌ Error handling call-status:', err.message);
@@ -135,25 +112,16 @@ app.post('/call-status', async (req, res) => {
   res.status(200).send('Call status processed');
 });
 
-// Incoming call → voicemail
+// Voice handler
 app.post('/voice', (req, res) => {
   const response = new twilio.twiml.VoiceResponse();
-
-  response.say("Hi there! The tradie is currently unavailable. Please leave a message after the beep.");
-  response.record({
-    maxLength: 60,
-    playBeep: true,
-    transcribe: true,
-    transcribeCallback: process.env.BASE_URL + '/voicemail',
-    action: process.env.BASE_URL + '/voicemail',
-  });
+  response.say("Hi! The tradie is unavailable. Leave a message after the beep.");
+  response.record({ maxLength: 60, playBeep: true, transcribe: true, transcribeCallback: process.env.BASE_URL + '/voicemail', action: process.env.BASE_URL + '/voicemail' });
   response.hangup();
-
-  res.type('text/xml');
-  res.send(response.toString());
+  res.type('text/xml').send(response.toString());
 });
 
-// Transcribe recording helper
+// Transcribe helper
 async function transcribeRecording(url) {
   if (!url) throw new Error('No recording URL provided');
   const response = await fetch(url);
@@ -181,17 +149,12 @@ app.post('/voicemail', async (req, res) => {
   const recordingUrl = req.body.RecordingUrl ? `${req.body.RecordingUrl}.mp3` : '';
   const from = formatPhone(req.body.From || '');
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
-
   if (!from) return res.status(400).send('Missing caller number');
 
   let transcription = '[Unavailable]';
-  try {
-    transcription = await transcribeRecording(recordingUrl);
-  } catch (err) {
-    console.error('❌ Transcription failed:', err.message);
-  }
+  try { transcription = await transcribeRecording(recordingUrl); } 
+  catch (err) { console.error('❌ Transcription failed:', err.message); }
 
-  // Store transcription as part of conversation
   conversations[from] = { step: 'voicemail_received', transcription };
 
   let reply = '';
@@ -200,32 +163,21 @@ app.post('/voicemail', async (req, res) => {
       model: 'gpt-3.5-turbo',
       messages: [
         { role: 'system', content: `
-You are an Aussie tradie assistant handling voicemails.
-1. Ask caller for name + quote/booking/other if not provided.
-2. Offer to schedule a call between 1–3 pm.
-3. Confirm proposed time.
-4. Keep replies short.
-5. Notify tradie with details and proposed time.
+You are a concise Aussie tradie assistant.
+- Only reply with intent: name, request type (quote/booking/other), and call scheduling.
+- Accept times between 1–3pm automatically.
+- Replies must be short, 1–2 SMS max.
+- Notify tradie with caller info and scheduled time.
         `},
         { role: 'user', content: transcription },
       ],
     });
     reply = response.choices?.[0]?.message?.content?.trim() || '';
-  } catch (err) {
-    console.error('❌ OpenAI error:', err.message);
-  }
+  } catch (err) { console.error('❌ OpenAI error:', err.message); }
 
   try {
-    if (reply && isValidAUSMobile(from)) {
-      await client.messages.create({ body: reply, from: process.env.TWILIO_PHONE, to: from });
-    }
-
-    await client.messages.create({
-      body: `🎙️ Voicemail from ${from}: "${transcription}"\n\nAI replied: "${reply}"`,
-      from: process.env.TWILIO_PHONE,
-      to: tradieNumber,
-    });
-
+    if (reply && isValidAUSMobile(from)) await client.messages.create({ body: reply, from: process.env.TWILIO_PHONE, to: from });
+    await client.messages.create({ body: `🎙️ Voicemail from ${from}: "${transcription}"\nAI replied: "${reply}"`, from: process.env.TWILIO_PHONE, to: tradieNumber });
     console.log(`✅ Voicemail processed for ${from}`);
     res.status(200).send('Voicemail processed');
   } catch (err) {
@@ -237,57 +189,41 @@ You are an Aussie tradie assistant handling voicemails.
 // ================= SMS webhook =================
 app.post('/sms', async (req, res) => {
   const from = formatPhone(req.body.From || '');
-  const body = req.body.Body || '';
+  const body = (req.body.Body || '').trim();
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
-
   if (!from || !body) return res.status(400).send('Missing SMS data');
 
   console.log(`📩 Received SMS from ${from}: "${body}"`);
 
-  // Retrieve conversation state
   const convo = conversations[from] || { step: 'new' };
-
   let aiPrompt = '';
 
   if (convo.step === 'awaiting_details') {
-    aiPrompt = `Customer replied with details: "${body}". Ask for preferred call time between 1-3pm and confirm.`;
+    aiPrompt = `Customer replied: "${body}". Ask for preferred call time between 1–3pm and confirm. Reply only with intent, name, request, and time.`;
     convo.step = 'scheduling';
   } else if (convo.step === 'scheduling') {
-    aiPrompt = `Customer proposed call time: "${body}". Confirm it back to customer and notify tradie.`;
+    const proposedTime = parseTime(body);
+    let confirmation = proposedTime ? `Confirmed for ${proposedTime}` : `Please pick a time between 1–3pm.`;
+    aiPrompt = `Customer proposed time: "${body}". ${confirmation}`;
     convo.step = 'done';
   } else {
-    aiPrompt = `Customer sent: "${body}". Respond appropriately as a tradie assistant.`;
+    aiPrompt = `Customer sent: "${body}". Reply concisely with intent and action.`;
   }
 
-  // Generate AI reply
   let reply = '';
   try {
     const response = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'You are a helpful Aussie tradie assistant.' },
-        { role: 'user', content: aiPrompt },
-      ],
+      messages: [{ role: 'system', content: 'Concise Aussie tradie assistant. Only reply with intent, name, request, and scheduled time. No greetings.' }, { role: 'user', content: aiPrompt }],
     });
     reply = response.choices?.[0]?.message?.content?.trim() || '';
-  } catch (err) {
-    console.error('❌ OpenAI SMS error:', err.message);
-  }
+  } catch (err) { console.error('❌ OpenAI SMS error:', err.message); }
 
   try {
-    if (reply) {
-      await client.messages.create({ body: reply, from: process.env.TWILIO_PHONE, to: from });
-    }
-
-    await client.messages.create({
-      body: `💬 SMS from ${from}: "${body}"\nAI replied: "${reply}"`,
-      from: process.env.TWILIO_PHONE,
-      to: tradieNumber,
-    });
-
-    conversations[from] = convo; // Save updated state
-
-    res.status(200).send('<Response></Response>'); // Twilio requires XML response
+    if (reply) await client.messages.create({ body: reply, from: process.env.TWILIO_PHONE, to: from });
+    await client.messages.create({ body: `💬 SMS from ${from}: "${body}"\nAI replied: "${reply}"`, from: process.env.TWILIO_PHONE, to: tradieNumber });
+    conversations[from] = convo;
+    res.status(200).send('<Response></Response>');
   } catch (err) {
     console.error('❌ SMS handler failed:', err.message);
     res.status(500).send('Failed SMS handling');
@@ -296,7 +232,5 @@ app.post('/sms', async (req, res) => {
 
 // Start server
 const host = process.env.HOST || '0.0.0.0';
-app.listen(port, host, () => {
-  console.log(`🚀 Server running at http://${host}:${port}`);
-});
+app.listen(port, host, () => console.log(`🚀 Server running at http://${host}:${port}`));
 
