@@ -59,14 +59,34 @@ function parseTime(text) {
   return match ? match[0] : null;
 }
 
-function parseNameAndIntent(text) {
-  // crude extraction using keywords
-  const nameMatch = text.match(/my name is (\w+)/i);
-  const intentMatch = text.match(/quote|booking|other/i);
-  return {
-    name: nameMatch ? nameMatch[1] : 'Customer',
-    intent: intentMatch ? intentMatch[0] : 'other'
-  };
+// GPT-powered name + intent + description extraction
+async function parseNameAndIntent(text) {
+  try {
+    const gptResp = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: `
+You are an AI that extracts structured info from a customer SMS.
+Return a JSON object with:
+- name: if given, otherwise "Customer"
+- intent: short phrase (quote, booking, plumbing issue, electrical job, leaking tap, etc.)
+- description: concise 1-sentence summary of what they want
+          `
+        },
+        { role: 'user', content: text }
+      ],
+      temperature: 0
+    });
+
+    const raw = gptResp.choices[0].message.content.trim();
+    const parsed = JSON.parse(raw);
+    return parsed;
+  } catch (err) {
+    console.error('❌ parseNameAndIntent failed:', err.message);
+    return { name: 'Customer', intent: 'other', description: text };
+  }
 }
 
 // ================= Onboarding SMS =================
@@ -78,7 +98,6 @@ app.post('/send-sms', smsLimiter, async (req, res) => {
 
   try {
     const assistantNumber = process.env.TWILIO_PHONE;
-
     await client.messages.create({ body: `⚡️Hi ${name}, your 24/7 assistant is now active ✅`, from: assistantNumber, to: formattedPhone });
     await client.messages.create({ body: `📲 Please forward your mobile number to ${assistantNumber} so we can handle missed calls.`, from: assistantNumber, to: formattedPhone });
     await client.messages.create({ body: `Tip: Set forwarding to "When Busy" or "When Unanswered". You're all set ⚡️`, from: assistantNumber, to: formattedPhone });
@@ -106,14 +125,92 @@ app.post('/call-status', async (req, res) => {
       await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
 
       conversations[from] = { step: 'awaiting_details', tradie_notified: false };
-
       console.log(`✅ Missed call handled for ${from}`);
     } catch (err) {
       console.error('❌ Error handling call-status:', err.message);
     }
   }
-
   res.status(200).send('Call status processed');
+});
+
+// ================= Voice handler =================
+app.post('/voice', (req, res) => {
+  const response = new twilio.twiml.VoiceResponse();
+  response.say("Hi! The tradie is unavailable. Leave a message after the beep.");
+  response.record({ maxLength: 60, playBeep: true, transcribe: true, transcribeCallback: process.env.BASE_URL + '/voicemail', action: process.env.BASE_URL + '/voicemail' });
+  response.hangup();
+  res.type('text/xml').send(response.toString());
+});
+
+// Transcribe helper
+async function transcribeRecording(url) {
+  if (!url) throw new Error('No recording URL provided');
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to download audio');
+
+  const tempFilePath = path.join(os.tmpdir(), `voicemail_${Date.now()}.mp3`);
+  const fileStream = fs.createWriteStream(tempFilePath);
+  await new Promise((resolve, reject) => {
+    response.body.pipe(fileStream);
+    response.body.on('error', reject);
+    fileStream.on('finish', resolve);
+  });
+
+  const transcriptionResponse = await openai.audio.transcriptions.create({
+    file: fs.createReadStream(tempFilePath),
+    model: 'whisper-1',
+  });
+
+  fs.unlink(tempFilePath, () => {});
+  return transcriptionResponse.text;
+}
+
+// ================= Voicemail callback with AI follow-up =================
+app.post('/voicemail', async (req, res) => {
+  const recordingUrl = req.body.RecordingUrl ? `${req.body.RecordingUrl}.mp3` : '';
+  const from = formatPhone(req.body.From || '');
+  const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
+  if (!from) return res.status(400).send('Missing caller number');
+
+  let transcription = '[Unavailable]';
+  try { transcription = await transcribeRecording(recordingUrl); } 
+  catch (err) { console.error('❌ Transcription failed:', err.message); }
+
+  conversations[from] = { step: 'awaiting_details', transcription };
+
+  try {
+    // Notify tradie immediately
+    await client.messages.create({ 
+      body: `🎙️ Voicemail from ${from}: "${transcription}"`, 
+      from: process.env.TWILIO_PHONE, 
+      to: tradieNumber 
+    });
+
+    // AI follow-up to customer
+    const gptResp = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: `
+You are a concise Aussie tradie assistant.
+Send one follow-up SMS asking for customer name and intent (quote/booking/other).
+Offer to schedule a call between 1-3pm.
+Keep message short and friendly.
+        `},
+        { role: 'user', content: `Transcription of voicemail: "${transcription}"` }
+      ]
+    });
+
+    const aiReply = gptResp.choices[0].message.content.trim();
+    if (aiReply && isValidAUSMobile(from)) {
+      await client.messages.create({ body: aiReply, from: process.env.TWILIO_PHONE, to: from });
+    }
+
+    console.log(`✅ Voicemail processed & AI follow-up sent for ${from}`);
+    res.status(200).send('Voicemail processed with AI follow-up');
+  } catch (err) {
+    console.error('❌ Voicemail handling failed:', err.message);
+    res.status(500).send('Failed voicemail handling');
+  }
 });
 
 // ================= SMS webhook =================
@@ -129,13 +226,17 @@ app.post('/sms', async (req, res) => {
   let reply = '';
 
   if (convo.step === 'awaiting_details') {
-    // Parse name & intent automatically
-    const info = parseNameAndIntent(body);
+    // GPT extraction for name, intent, description
+    const info = await parseNameAndIntent(body);
     convo.customer_info = info;
 
-    // Notify tradie immediately
+    // Notify tradie with proper intent + description
     await client.messages.create({
-      body: `📩 Missed call from ${from}. Name: ${info.name}, Intent: ${info.intent}. Waiting for call time.`,
+      body: `📩 Missed call from ${from}
+Name: ${info.name}
+Intent: ${info.intent}
+Details: ${info.description}
+Waiting for call time...`,
       from: process.env.TWILIO_PHONE,
       to: tradieNumber
     });
@@ -144,19 +245,23 @@ app.post('/sms', async (req, res) => {
     convo.step = 'scheduling';
 
   } else if (convo.step === 'scheduling') {
-    let proposedTime = parseTime(body);
+    const proposedTime = parseTime(body);
     if (proposedTime) {
       reply = `Thanks! Everything is confirmed. We will see you at ${proposedTime}.`;
 
       await client.messages.create({
-        body: `✅ Booking confirmed for ${from}: Name: ${convo.customer_info.name}, Intent: ${convo.customer_info.intent}, Call at ${proposedTime}`,
+        body: `✅ Booking confirmed for ${from}
+Name: ${convo.customer_info.name}
+Intent: ${convo.customer_info.intent}
+Details: ${convo.customer_info.description}
+Call at ${proposedTime}`,
         from: process.env.TWILIO_PHONE,
         to: tradieNumber
       });
 
       convo.step = 'done';
     } else {
-      // GPT handles edge case times
+      // GPT handles invalid times
       try {
         const gptResp = await openai.chat.completions.create({
           model: 'gpt-3.5-turbo',
