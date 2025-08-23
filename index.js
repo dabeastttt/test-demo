@@ -122,9 +122,11 @@ app.post('/call-status', async (req, res) => {
       const introMsg = `G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
       await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
 
+      conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false };
+
+      // Constant follow-up for normal missed calls
       await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
 
-      conversations[from] = { step: 'awaiting_details', tradie_notified: false };
       console.log(`✅ Missed call handled for ${from}`);
     } catch (err) {
       console.error('❌ Error handling call-status:', err.message);
@@ -145,8 +147,14 @@ app.post('/voice', (req, res) => {
 // Transcribe helper
 async function transcribeRecording(url) {
   if (!url) throw new Error('No recording URL provided');
-  const response = await fetch(url);
-  if (!response.ok) throw new Error('Failed to download audio');
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+    }
+  });
+
+  if (!response.ok) throw new Error(`Failed to download audio: ${response.statusText}`);
 
   const tempFilePath = path.join(os.tmpdir(), `voicemail_${Date.now()}.mp3`);
   const fileStream = fs.createWriteStream(tempFilePath);
@@ -176,10 +184,11 @@ app.post('/voicemail', async (req, res) => {
   try { transcription = await transcribeRecording(recordingUrl); } 
   catch (err) { console.error('❌ Transcription failed:', err.message); }
 
-  conversations[from] = { step: 'awaiting_details', transcription };
+  // Mark conversation as voicemail
+  conversations[from] = { step: 'awaiting_details', transcription, type: 'voicemail' };
 
   try {
-    // Notify tradie immediately
+    // Notify tradie with transcription
     await client.messages.create({ 
       body: `🎙️ Voicemail from ${from}: "${transcription}"`, 
       from: process.env.TWILIO_PHONE, 
@@ -222,46 +231,39 @@ app.post('/sms', async (req, res) => {
 
   console.log(`📩 Received SMS from ${from}: "${body}"`);
 
-  let convo = conversations[from] || { step: 'new', tradie_notified: false };
+  let convo = conversations[from] || { step: 'new', tradie_notified: false, type: 'missed_call' };
   let reply = '';
 
   if (convo.step === 'awaiting_details') {
-    // GPT extraction for name, intent, description
     const info = await parseNameAndIntent(body);
     convo.customer_info = info;
 
-    // Notify tradie with proper intent + description
+    // Notify tradie with intent + description
     await client.messages.create({
-      body: `📩 Missed call from ${from}
-Name: ${info.name}
-Intent: ${info.intent}
-Details: ${info.description}
-Waiting for call time...`,
+      body: `📩 ${convo.type === 'voicemail' ? 'Voicemail received' : 'Missed call from'} ${from}\nName: ${info.name}\nIntent: ${info.intent}\nDetails: ${info.description}\nWaiting for call time...`,
       from: process.env.TWILIO_PHONE,
       to: tradieNumber
     });
 
-    reply = `Thanks ${info.name}! What time works for a call between 1-3 pm?`;
-    convo.step = 'scheduling';
+    // Only send constant follow-up if not voicemail
+    if (convo.type !== 'voicemail') {
+      reply = `Thanks ${info.name}! What time works for a call between 1-3 pm?`;
+    }
 
+    convo.step = 'scheduling';
   } else if (convo.step === 'scheduling') {
     const proposedTime = parseTime(body);
     if (proposedTime) {
       reply = `Thanks! Everything is confirmed. We will see you at ${proposedTime}.`;
 
       await client.messages.create({
-        body: `✅ Booking confirmed for ${from}
-Name: ${convo.customer_info.name}
-Intent: ${convo.customer_info.intent}
-Details: ${convo.customer_info.description}
-Call at ${proposedTime}`,
+        body: `✅ Booking confirmed for ${from}\nName: ${convo.customer_info.name}\nIntent: ${convo.customer_info.intent}\nDetails: ${convo.customer_info.description}\nCall at ${proposedTime}`,
         from: process.env.TWILIO_PHONE,
         to: tradieNumber
       });
 
       convo.step = 'done';
     } else {
-      // GPT handles invalid times
       try {
         const gptResp = await openai.chat.completions.create({
           model: 'gpt-3.5-turbo',
@@ -288,4 +290,5 @@ Call at ${proposedTime}`,
 // ================= Start server =================
 const host = process.env.HOST || '0.0.0.0';
 app.listen(port, host, () => console.log(`🚀 Server running at http://${host}:${port}`));
+
 
