@@ -54,15 +54,16 @@ function isValidAUSMobile(phone) {
 
 const conversations = {}; // store ongoing conversations
 
-// Improved time parser
+// Improved time parser that handles all common formats
 function parseTime(text) {
-  const timeRegex = /\b(1|2|3)([:.]([0-5][0-9]))?\s*(am|pm)?\b/i;
+  text = text.toLowerCase().replace(/\s/g, '');
+  const timeRegex = /^(1|2|3|1[0-2])[:.]?([0-5][0-9])?(am|pm)?$/i;
   const match = text.match(timeRegex);
   if (!match) return null;
 
   let hour = parseInt(match[1]);
-  let minutes = match[3] ? parseInt(match[3]) : 0;
-  let ampm = match[4] ? match[4].toLowerCase() : null;
+  let minutes = match[2] ? parseInt(match[2]) : 0;
+  const ampm = match[3] ? match[3].toLowerCase() : null;
 
   if (ampm === 'pm' && hour < 12) hour += 12;
   if (ampm === 'am' && hour === 12) hour = 0;
@@ -92,8 +93,7 @@ Return a JSON object with:
     });
 
     const raw = gptResp.choices[0].message.content.trim();
-    const parsed = JSON.parse(raw);
-    return parsed;
+    return JSON.parse(raw);
   } catch (err) {
     console.error('❌ parseNameAndIntent failed:', err.message);
     return { name: 'Customer', intent: 'other', description: text };
@@ -128,7 +128,6 @@ app.post('/call-status', async (req, res) => {
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
   if (!from) return res.status(400).send('Missing caller number');
 
-  // Only skip follow-up if this conversation is confirmed voicemail
   const convo = conversations[from];
   if (convo && convo.type === 'voicemail' && convo.transcription) {
     console.log(`ℹ️ Skipping constant follow-up for ${from} because voicemail already handled`);
@@ -137,14 +136,12 @@ app.post('/call-status', async (req, res) => {
 
   if (['no-answer', 'busy'].includes(callStatus)) {
     try {
-      const introMsg = `G’day, this is ${process.env.TRADIE_NAME} A.I Receptionist from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
+      const introMsg = `G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
       await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
 
       conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false };
 
-      // Constant follow-up only for normal missed calls
       await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
-
       console.log(`✅ Missed call handled for ${from}`);
     } catch (err) {
       console.error('❌ Error handling call-status:', err.message);
@@ -161,7 +158,7 @@ app.post('/voice', (req, res) => {
     maxLength: 60, 
     playBeep: true, 
     transcribe: true, 
-    transcribeCallback: process.env.BASE_URL + '/voicemail' // ONLY THIS
+    transcribeCallback: process.env.BASE_URL + '/voicemail' 
   });
   response.hangup();
   res.type('text/xml').send(response.toString());
@@ -210,14 +207,12 @@ app.post('/voicemail', async (req, res) => {
   conversations[from] = { step: 'awaiting_details', transcription, type: 'voicemail' };
 
   try {
-    // Notify tradie with transcription
     await client.messages.create({ 
       body: `🎙️ Voicemail from ${from}: "${transcription}"`, 
       from: process.env.TWILIO_PHONE, 
       to: tradieNumber 
     });
 
-    // AI follow-up to customer only
     const gptResp = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
@@ -260,23 +255,26 @@ app.post('/sms', async (req, res) => {
     const info = await parseNameAndIntent(body);
     convo.customer_info = info;
 
-    // Notify tradie
+    let detailsText = info.description || '';
+    if (convo.type === 'voicemail' && convo.transcription) {
+      detailsText = `${detailsText} (Voicemail: ${convo.transcription})`;
+    }
+
     await client.messages.create({
-      body: `📩 ${convo.type === 'voicemail' ? 'Voicemail received' : 'Missed call from'} ${from}\nName: ${info.name}\nIntent: ${info.intent}\nDetails: ${info.description}\nWaiting for call time...`,
+      body: `📩 ${convo.type === 'voicemail' ? 'Voicemail received' : 'Missed call from'} ${from}
+Name: ${info.name}
+Intent: ${info.intent}
+Details: ${detailsText}
+Waiting for call time...`,
       from: process.env.TWILIO_PHONE,
       to: tradieNumber
     });
 
-    // Only send constant follow-up if not voicemail
-    if (convo.type !== 'voicemail') {
-      reply = `Thanks ${info.name}! What time works for a call between 1-3 pm?`;
-    }
-
+    reply = `Thanks ${info.name}! What time works for a call between 1-3 pm?`;
     convo.step = 'scheduling';
   } else if (convo.step === 'scheduling') {
     let proposedTime = parseTime(body);
 
-    // GPT fallback for tricky time inputs
     if (!proposedTime) {
       try {
         const gptResp = await openai.chat.completions.create({
@@ -294,7 +292,11 @@ app.post('/sms', async (req, res) => {
       reply = `Thanks! Everything is confirmed. We will see you at ${proposedTime}.`;
 
       await client.messages.create({
-        body: `✅ Booking confirmed for ${from}\nName: ${convo.customer_info.name}\nIntent: ${convo.customer_info.intent}\nDetails: ${convo.customer_info.description}\nCall at ${proposedTime}`,
+        body: `✅ Booking confirmed for ${from}
+Name: ${convo.customer_info.name}
+Intent: ${convo.customer_info.intent}
+Details: ${convo.customer_info.description}
+Call at ${proposedTime}`,
         from: process.env.TWILIO_PHONE,
         to: tradieNumber
       });
