@@ -128,16 +128,16 @@ app.post('/call-status', async (req, res) => {
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
   if (!from) return res.status(400).send('Missing caller number');
 
-  // Skip if this caller already left a voicemail
+  // Only skip follow-up if this conversation is confirmed voicemail
   const convo = conversations[from];
-  if (convo && convo.type === 'voicemail') {
+  if (convo && convo.type === 'voicemail' && convo.transcription) {
     console.log(`ℹ️ Skipping constant follow-up for ${from} because voicemail already handled`);
     return res.status(200).send('Voicemail already handled');
   }
 
   if (['no-answer', 'busy'].includes(callStatus)) {
     try {
-      const introMsg = `G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
+      const introMsg = `G’day, this is ${process.env.TRADIE_NAME} A.I Receptionist from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
       await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
 
       conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false };
@@ -156,7 +156,7 @@ app.post('/call-status', async (req, res) => {
 // ================= Voice handler =================
 app.post('/voice', (req, res) => {
   const response = new twilio.twiml.VoiceResponse();
-  response.say("Hi! The tradie is unavailable. Leave a message after the beep.");
+  response.say("Hi! The tradie is unavailable TradeAssist AI will handle your queries. Leave a message after the beep.");
   response.record({ 
     maxLength: 60, 
     playBeep: true, 
