@@ -157,7 +157,12 @@ app.post('/call-status', async (req, res) => {
 app.post('/voice', (req, res) => {
   const response = new twilio.twiml.VoiceResponse();
   response.say("Hi! The tradie is unavailable. Leave a message after the beep.");
-  response.record({ maxLength: 60, playBeep: true, transcribe: true, transcribeCallback: process.env.BASE_URL + '/voicemail', action: process.env.BASE_URL + '/voicemail' });
+  response.record({ 
+    maxLength: 60, 
+    playBeep: true, 
+    transcribe: true, 
+    transcribeCallback: process.env.BASE_URL + '/voicemail' // ONLY THIS
+  });
   response.hangup();
   res.type('text/xml').send(response.toString());
 });
@@ -322,3 +327,4 @@ app.post('/sms', async (req, res) => {
 // ================= Start server =================
 const host = process.env.HOST || '0.0.0.0';
 app.listen(port, host, () => console.log(`🚀 Server running at http://${host}:${port}`));
+
