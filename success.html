@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Success — TradeAssist A.I</title>
+  <style>
+    :root {
+      --orange: #FF6B00;
+      --orange-light: #FF914D;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #0A0A0A;
+      color: var(--orange);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+    }
+
+    canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      background: #0A0A0A;
+    }
+
+.success-box {
+  position: relative;
+  z-index: 10;
+  max-width: 280px;
+  max-height: 85vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 2rem auto;
+  background: rgba(30, 30, 30, 0.1);
+  border-radius: 16px;
+  padding: 1.5rem 1.5rem;
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(10px);
+
+  /* 🔥 REMOVE THIS LINE to kill the glow */
+  /* box-shadow: 0 0 20px #FF914D88; */
+
+  text-align: center;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeInUp 1s ease forwards 0.4s;
+}
+
+
+
+
+    @keyframes fadeInUp {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .bolt-wrapper {
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: center;
+      animation: slideToCenter 1.8s ease-out forwards;
+      transform: translateX(100%);
+      opacity: 0;
+    }
+
+    @keyframes slideToCenter {
+      0% {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      100% {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    .glow-icon {
+      width: clamp(80px, 20vw, 120px);
+      height: clamp(80px, 20vw, 120px);
+      filter: drop-shadow(0 0 12px #FF6B00cc);
+      animation: glowPulse 3s ease-in-out infinite;
+      display: block;
+      margin: 0 auto 1rem;
+    }
+
+    @keyframes glowPulse {
+      0%, 100% {
+        filter: drop-shadow(0 0 8px #FF6B00aa);
+      }
+      50% {
+        filter: drop-shadow(0 0 16px #FF914Dcc);
+      }
+    }
+
+    h1 {
+      font-size: clamp(1.6rem, 6vw, 2.6rem);
+      font-weight: 900;
+      margin: 0.5rem 0 1rem;
+      text-shadow: 0 0 15px #FF6B00bb;
+      color: var(--orange);
+    }
+
+    p {
+      font-size: clamp(1rem, 4vw, 1.25rem);
+      margin-bottom: 2rem;
+      color: var(--orange-light);
+      line-height: 1.5;
+    }
+
+    a {
+      display: inline-block;
+      text-decoration: none;
+      color: #0A0A0A;
+      background: var(--orange);
+      padding: 0.75rem 1.5rem;
+      font-weight: 700;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px #FF914D88;
+      transition: background 0.3s ease, color 0.3s ease;
+      font-size: 1rem;
+    }
+
+    a:hover, a:focus {
+      background: var(--orange-light);
+      color: #0A0A0A;
+      box-shadow: 0 8px 24px #FF914Dcc;
+      outline: none;
+    }
+
+    @media (max-height: 600px) {
+      .success-box {
+        margin: 1.5rem auto;
+        padding: 1.5rem 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="matrixCanvas"></canvas>
+
+  <div class="success-box">
+    <div class="bolt-wrapper">
+      <svg class="glow-icon" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="orangeBolt" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#FF6B00" />
+            <stop offset="100%" stop-color="#FF914D" />
+          </linearGradient>
+        </defs>
+        <path d="M32 8c-11 0-20 9-20 20v4c0 2.2 1.8 4 4 4h32c2.2 0 4-1.8 4-4v-4c0-11-9-20-20-20z"
+          fill="url(#orangeBolt)" stroke="#FFFFFF" stroke-width="2"/>
+        <path d="M20 36v-4c0-6.6 5.4-12 12-12s12 5.4 12 12v4"
+          fill="none" stroke="#FFFFFF" stroke-width="2"/>
+      </svg>
+    </div>
+
+    <h1>Thanks for Joining the Waitlist!</h1>
+    <p>
+      We’ll be in touch soon with early access updates.<br>
+        <strong id="waitlistPosition" style="color: var(--orange-light);"></strong>
+    </p>
+    <a href="/">Back to Home</a>
+  </div>
+
+  <script>
+  const canvas = document.getElementById('matrixCanvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const particlesArray = [];
+  const numberOfParticles = 100;
+
+  class Particle {
+    constructor() {
+      this.x = Math.random() * canvas.width;
+      this.y = Math.random() * canvas.height;
+      this.size = 2;
+      this.baseX = this.x;
+      this.baseY = this.y;
+      this.dx = (Math.random() - 0.5) * 1.5;
+      this.dy = (Math.random() - 0.5) * 1.5;
+    }
+
+    update() {
+      this.x += this.dx;
+      this.y += this.dy;
+
+      // bounce off edges
+      if (this.x <= 0 || this.x >= canvas.width) this.dx *= -1;
+      if (this.y <= 0 || this.y >= canvas.height) this.dy *= -1;
+    }
+
+    draw() {
+      ctx.fillStyle = '#FF6B00';
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function connect() {
+    for (let a = 0; a < particlesArray.length; a++) {
+      for (let b = a + 1; b < particlesArray.length; b++) {
+        const dx = particlesArray[a].x - particlesArray[b].x;
+        const dy = particlesArray[a].y - particlesArray[b].y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < 120) {
+          ctx.strokeStyle = 'rgba(255, 107, 0, 0.1)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
+          ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function init() {
+    particlesArray.length = 0;
+    for (let i = 0; i < numberOfParticles; i++) {
+      particlesArray.push(new Particle());
+    }
+  }
+
+  function animate() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particlesArray.forEach(p => {
+      p.update();
+      p.draw();
+    });
+    connect();
+    requestAnimationFrame(animate);
+  }
+
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    init();
+  });
+
+  init();
+  animate();
+
+  // 🎯 Fetch waitlist position and show it
+const positionEl = document.getElementById('waitlistPosition');
+  positionEl.textContent = "🔥 Thanks for joining the waitlist! We'll be in touch soon.";
+</script>

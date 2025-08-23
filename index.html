@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TradeAssist A.I Signup</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+/* Base Box Sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Base Page Styles */
+body, html {
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #0A0A0A;
+  color: #FFFFFF;
+  overflow: hidden;
+  scroll-behavior: smooth;
+}
+
+/* iOS Safari Full Height Fix */
+@supports (-webkit-touch-callout: none) {
+  html, body {
+    height: -webkit-fill-available;
+  }
+}
+
+/* Matrix Canvas Background */
+#matrixCanvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  background: #0A0A0A;
+  pointer-events: none;
+}
+
+main {
+  position: relative;
+  z-index: 10;
+  max-width: 340px;          /* narrower */
+  max-height: 85vh;          /* max height relative to viewport */
+  overflow-y: auto;          /* enable vertical scroll if content overflows */
+  overflow-x: hidden;
+  margin: 2rem auto;
+  background: rgba(30, 30, 30, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 0 20px #FF914D88;
+  padding: 1.5rem 1.5rem;    /* tighter padding */
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.glow-icon {
+  display: block;
+  margin: 0 auto 1.5rem auto;
+  width: 120px;
+  height: 120px;
+  filter: drop-shadow(0 0 6px #FF6B0099); /* less blur, less opacity */
+  animation: glowPulse 3s ease-in-out infinite;
+}   
+
+@keyframes glowPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px #FF6B0088); /* lighter glow */
+  }
+  50% {
+    filter: drop-shadow(0 0 10px #FF914D99); /* toned down peak glow */
+  }
+}
+
+
+    h1 {
+      font-weight: 900;
+      font-size: 2.6rem;
+      margin: 0 0 0.6rem;
+      text-align: center;
+      color: #FF6B00;
+      text-shadow: 0 0 10px #FF914D88;
+    }
+
+    h2 {
+      font-weight: 400;
+      font-size: 1.15rem;
+      margin: 0 0 2rem;
+      text-align: center;
+      color: #FF914D;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-weight: 600;
+      color: #FF914D;
+    }
+
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"] {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1.5rem;
+      border-radius: 10px;
+      border: 2px solid #FF6B00;
+      font-size: 1rem;
+      color: #FFFFFF;
+      background-color: #1E1E1E;
+      transition: background-color 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+      box-shadow: 0 0 8px #FF6B00;
+    }
+
+    input:focus {
+      background-color: #2a2a2a;
+      outline: none;
+      border-color: #FF6B00;
+      box-shadow: 0 0 10px #FF6B00;
+    }
+
+    button {
+      width: 100%;
+      padding: 0.9rem;
+      font-size: 1.2rem;
+      font-weight: 700;
+      background: #FF6B00;
+      color: #0A0A0A;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 6px 18px #FF914D88;
+      transition: background 0.3s ease, color 0.3s ease;
+      margin-top: 1rem;
+    }
+
+    button:hover,
+    button:focus {
+      background: #FF914D;
+      color: #FFFFFF;
+      box-shadow: 0 8px 24px #FF914DCC;
+      outline: none;
+    }
+
+    #loadingScreen {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 9999;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(10, 10, 10, 0.95);
+      color: #FF6B00;
+      font-size: 2rem;
+      text-align: center;
+      padding-top: 30vh;
+    }
+
+    /* Buttons container for toggles */
+    .toggle-buttons {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    /* Make toggle buttons narrower to fit side-by-side */
+    .toggle-buttons button {
+      width: auto;
+      flex: 1 1 48%;
+      padding: 0.75rem;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+
+/* SMS Flow */
+.sms-preview {
+  margin-top: 1.5rem;
+}
+
+.chat {  
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: #121212;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 0 12px #FF6B0055;
+}
+
+.bubble {
+  position: relative; /* needed for tail */
+  padding: 0.9rem 1.2rem;
+  border-radius: 14px;
+  max-width: 85%;
+  font-size: 1rem;
+  animation: fadeIn 0.8s ease forwards;
+  opacity: 0;
+}
+
+/* AI bubble - orange - bottom left tail */
+.bubble.ai {
+  background-color: #FF6B00;
+  color: #0A0A0A;
+  align-self: flex-start;
+  animation-delay: 0.2s;
+}
+.bubble.ai::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  border-top: 26px solid transparent;
+  border-right: 26px solid #FF6B00;
+  border-bottom: 0 solid transparent;
+  transform: translateX(-46%);
+}
+
+/* Client bubble - dark - bottom right tail */
+.bubble.client {
+  background-color: #2a2a2a;
+  color: #fff;
+  align-self: flex-end;
+  animation-delay: 1.2s;
+}
+.bubble.client::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 26px solid transparent;
+  border-left: 26px solid #2a2a2a;
+  border-bottom: 0 solid transparent;
+  transform: translateX(46%);
+}
+
+/* Optional: fade-in animation */
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.loading-screen {
+  text-align: center;
+  padding: 2rem;
+  background-color: #121212;
+  color: white;
+  border-radius: 12px;
+  margin-top: 2rem;
+  box-shadow: 0 0 12px #FF6B0055;
+}
+
+</style>
+</head>
+
+<body>
+
+<canvas id="matrixCanvas"></canvas>
+
+<main>
+  <svg class="glow-icon" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="orangeBolt" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#FF6B00" />
+        <stop offset="100%" stop-color="#FF914D" />
+      </linearGradient>
+    </defs>
+    <path d="M32 8c-11 0-20 9-20 20v4c0 2.2 1.8 4 4 4h32c2.2 0 4-1.8 4-4v-4c0-11-9-20-20-20z"
+          fill="url(#orangeBolt)" stroke="#FFFFFF" stroke-width="2"/>
+    <path d="M20 36v-4c0-6.6 5.4-12 12-12s12 5.4 12 12v4"
+          fill="none" stroke="#FFFFFF" stroke-width="2"/>
+  </svg>
+
+  <div style="text-align: center;">
+    <h1>TradeAssist AI</h1> 
+    <h2>BUILT FOR TRADIES – WITH TRADIES.</h2>
+    <p style="font-family: 'Courier New', monospace; font-size: 1.1rem; margin-top: 0.5rem;">
+      No missed calls. No lost jobs. No extra admin.
+    </p>
+  </div>
+
+  <!-- Removed signupCountMessage div -->
+
+<main>
+<form id="signupForm" autocomplete="off" novalidate>
+  <label for="name">Full Name</label>
+  <input type="text" id="name" name="name" placeholder="John Smith" required />
+
+  <label for="phone">Mobile Number</label>
+  <input type="tel" id="phone" name="phone" placeholder="0400 000 000" pattern="[0-9\s\-+]+" required />
+
+  <input type="hidden" name="signupTime" id="signupTime" />
+
+  <button type="submit">Join Waitlist</button>
+</form>
+
+</main>
+
+<div id="loadingScreen" class="loading-screen" style="display:none;">
+  <h2 style="font-family: 'Anton', sans-serif; font-weight: 700; font-size: 2rem; margin-bottom: 1rem;">
+    You're in! See how TradeAssist A.I instantly follows up on missed calls.
+  </h2>
+</div>
+
+<script>
+  const canvas = document.getElementById('matrixCanvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const particlesArray = [];
+  const numberOfParticles = 100;
+
+  class Particle {
+    constructor() {
+      this.x = Math.random() * canvas.width;
+      this.y = Math.random() * canvas.height;
+      this.size = 2;
+      this.baseX = this.x;
+      this.baseY = this.y;
+      this.dx = (Math.random() - 0.5) * 1.5;
+      this.dy = (Math.random() - 0.5) * 1.5;
+    }
+
+    update() {
+      this.x += this.dx;
+      this.y += this.dy;
+
+      // bounce off edges
+      if (this.x <= 0 || this.x >= canvas.width) this.dx *= -1;
+      if (this.y <= 0 || this.y >= canvas.height) this.dy *= -1;
+    }
+
+    draw() {
+      ctx.fillStyle = '#FF6B00';
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function connect() {
+    for (let a = 0; a < particlesArray.length; a++) {
+      for (let b = a + 1; b < particlesArray.length; b++) {
+        const dx = particlesArray[a].x - particlesArray[b].x;
+        const dy = particlesArray[a].y - particlesArray[b].y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < 120) {
+          ctx.strokeStyle = 'rgba(255, 107, 0, 0.1)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
+          ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function init() {
+    particlesArray.length = 0;
+    for (let i = 0; i < numberOfParticles; i++) {
+      particlesArray.push(new Particle());
+    }
+  }
+
+  function animate() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particlesArray.forEach(p => {
+      p.update();
+      p.draw();
+    });
+    connect();
+    requestAnimationFrame(animate);
+  }
+
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    init();
+  });
+
+  init();
+  animate();
+</script>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('signupForm');
+    const loadingScreen = document.getElementById('loadingScreen');
+    const button = form.querySelector('button');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+
+      loadingScreen.style.display = 'block';
+      button.disabled = true;
+
+      form.signupTime.value = String(Date.now());
+
+
+      const formData = {
+       name: form.name.value.trim(),
+       phone: form.phone.value.trim(),
+       signupTime: form.signupTime.value
+      };
+
+      try {
+        const res = await fetch('/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData)
+        });
+
+        if (res.ok) {
+          window.location.href = '/success';
+        } else {
+          throw new Error('Registration failed');
+        }
+      } catch (err) {
+        alert("Registration error. Please try again.");
+        loadingScreen.style.display = 'none';
+        button.disabled = false;
+      }
+    });
+  });
+</script>
+
+</body>
+</html>
