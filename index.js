@@ -6,7 +6,9 @@ const twilio = require('twilio');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const os = require('os');
-const fetch = require('node-fetch');
+
+// CommonJS-safe fetch
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 // Twilio client
 const client = twilio(
@@ -16,9 +18,7 @@ const client = twilio(
 
 // OpenAI client
 const OpenAI = require('openai').default;
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -45,6 +45,7 @@ const smsLimiter = rateLimit({
 
 // Helpers
 function formatPhone(phone) {
+  if (!phone) return '';
   const cleaned = phone.replace(/\D/g, '');
   if (cleaned.startsWith('0')) return `+61${cleaned.slice(1)}`;
   if (cleaned.startsWith('61')) return `+${cleaned}`;
@@ -56,9 +57,12 @@ function isValidAUSMobile(phone) {
   return /^\+61[0-9]{9}$/.test(phone);
 }
 
-// ========= ROUTES ==========
+// Memory store for ongoing conversations (for demo purposes)
+const conversations = {};
 
-// Onboarding SMS (signup)
+// ========== ROUTES ==========
+
+// Onboarding SMS
 app.post('/send-sms', smsLimiter, async (req, res) => {
   const { name, phone } = req.body;
   console.log('📩 Signup request received:', { name, phone });
@@ -73,7 +77,6 @@ app.post('/send-sms', smsLimiter, async (req, res) => {
   try {
     const assistantNumber = process.env.TWILIO_PHONE;
 
-    // Send onboarding SMSs
     await client.messages.create({
       body: `⚡️Hi ${name}, your 24/7 assistant is now active ✅`,
       from: assistantNumber,
@@ -100,24 +103,28 @@ app.post('/send-sms', smsLimiter, async (req, res) => {
   }
 });
 
-// Call status (missed/busy)
+// Call-status handler (missed/busy)
 app.post('/call-status', async (req, res) => {
   const callStatus = req.body.CallStatus;
   const from = formatPhone(req.body.From || '');
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
 
+  if (!from) return res.status(400).send('Missing caller number');
+
   if (['no-answer', 'busy'].includes(callStatus)) {
     try {
-      // Step 1: Ask caller for details instead of static msg
-      const introMsg = `👷 The tradie is busy right now. Can you please reply with your *name* and whether you’re after a quote, booking, or something else?`;
+      const introMsg = `👷 The tradie is busy right now. Please reply with your *name* and whether you’re after a quote, booking, or something else.`;
+
       await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
 
-      // Notify tradie a follow-up has started
       await client.messages.create({
         body: `⚠️ Missed call from ${from}. Assistant is asking for details.`,
         from: process.env.TWILIO_PHONE,
         to: tradieNumber
       });
+
+      // Initialize conversation memory
+      conversations[from] = { step: 'awaiting_details' };
 
       console.log(`✅ Missed call handled for ${from}`);
     } catch (err) {
@@ -146,8 +153,9 @@ app.post('/voice', (req, res) => {
   res.send(response.toString());
 });
 
-// Helper: transcribe recording
+// Transcribe recording helper
 async function transcribeRecording(url) {
+  if (!url) throw new Error('No recording URL provided');
   const response = await fetch(url);
   if (!response.ok) throw new Error('Failed to download audio');
 
@@ -174,6 +182,8 @@ app.post('/voicemail', async (req, res) => {
   const from = formatPhone(req.body.From || '');
   const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
 
+  if (!from) return res.status(400).send('Missing caller number');
+
   let transcription = '[Unavailable]';
   try {
     transcription = await transcribeRecording(recordingUrl);
@@ -181,18 +191,21 @@ app.post('/voicemail', async (req, res) => {
     console.error('❌ Transcription failed:', err.message);
   }
 
+  // Store transcription as part of conversation
+  conversations[from] = { step: 'voicemail_received', transcription };
+
   let reply = '';
   try {
     const response = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
         { role: 'system', content: `
-You are an Aussie tradie assistant handling voicemails. 
-1. If caller hasn’t given details yet → ask their name + whether it’s a quote, booking or other.
-2. Once they answer, offer to schedule a call between 1–3 pm today.
-3. If they propose a time → confirm it back.
-4. Keep replies short (1–2 SMS max).
-5. Always notify the tradie with the details and proposed time.
+You are an Aussie tradie assistant handling voicemails.
+1. Ask caller for name + quote/booking/other if not provided.
+2. Offer to schedule a call between 1–3 pm.
+3. Confirm proposed time.
+4. Keep replies short.
+5. Notify tradie with details and proposed time.
         `},
         { role: 'user', content: transcription },
       ],
@@ -203,11 +216,10 @@ You are an Aussie tradie assistant handling voicemails.
   }
 
   try {
-    // Send AI reply to caller
-    if (reply) {
+    if (reply && isValidAUSMobile(from)) {
       await client.messages.create({ body: reply, from: process.env.TWILIO_PHONE, to: from });
     }
-    // Notify tradie
+
     await client.messages.create({
       body: `🎙️ Voicemail from ${from}: "${transcription}"\n\nAI replied: "${reply}"`,
       from: process.env.TWILIO_PHONE,
@@ -222,8 +234,69 @@ You are an Aussie tradie assistant handling voicemails.
   }
 });
 
+// ================= SMS webhook =================
+app.post('/sms', async (req, res) => {
+  const from = formatPhone(req.body.From || '');
+  const body = req.body.Body || '';
+  const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
+
+  if (!from || !body) return res.status(400).send('Missing SMS data');
+
+  console.log(`📩 Received SMS from ${from}: "${body}"`);
+
+  // Retrieve conversation state
+  const convo = conversations[from] || { step: 'new' };
+
+  let aiPrompt = '';
+
+  if (convo.step === 'awaiting_details') {
+    aiPrompt = `Customer replied with details: "${body}". Ask for preferred call time between 1-3pm and confirm.`;
+    convo.step = 'scheduling';
+  } else if (convo.step === 'scheduling') {
+    aiPrompt = `Customer proposed call time: "${body}". Confirm it back to customer and notify tradie.`;
+    convo.step = 'done';
+  } else {
+    aiPrompt = `Customer sent: "${body}". Respond appropriately as a tradie assistant.`;
+  }
+
+  // Generate AI reply
+  let reply = '';
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: 'You are a helpful Aussie tradie assistant.' },
+        { role: 'user', content: aiPrompt },
+      ],
+    });
+    reply = response.choices?.[0]?.message?.content?.trim() || '';
+  } catch (err) {
+    console.error('❌ OpenAI SMS error:', err.message);
+  }
+
+  try {
+    if (reply) {
+      await client.messages.create({ body: reply, from: process.env.TWILIO_PHONE, to: from });
+    }
+
+    await client.messages.create({
+      body: `💬 SMS from ${from}: "${body}"\nAI replied: "${reply}"`,
+      from: process.env.TWILIO_PHONE,
+      to: tradieNumber,
+    });
+
+    conversations[from] = convo; // Save updated state
+
+    res.status(200).send('<Response></Response>'); // Twilio requires XML response
+  } catch (err) {
+    console.error('❌ SMS handler failed:', err.message);
+    res.status(500).send('Failed SMS handling');
+  }
+});
+
 // Start server
 const host = process.env.HOST || '0.0.0.0';
 app.listen(port, host, () => {
   console.log(`🚀 Server running at http://${host}:${port}`);
 });
+
