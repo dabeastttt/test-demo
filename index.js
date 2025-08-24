@@ -153,7 +153,7 @@ app.post('/call-status', async (req, res) => {
 // ================= Voice handler =================
 app.post('/voice', (req, res) => {
   const response = new twilio.twiml.VoiceResponse();
-  response.say("Hi! The tradie is unavailable TradeAssist AI will handle your queries. Leave a message after the beep.");
+  response.say("Hi! The tradie is unavailable. Leave a message after the beep.");
   response.record({ 
     maxLength: 60, 
     playBeep: true, 
