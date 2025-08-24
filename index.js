@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 
 // CommonJS-safe fetch
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // Twilio client
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -121,18 +121,44 @@ app.post('/send-sms', smsLimiter, async (req, res) => {
   }
 });
 
-================= Call-status handler (missed/busy)
-app.post('/call-status', async (req, res) => { const callStatus = req.body.CallStatus; const from = formatPhone(req.body.From || ''); const tradieNumber = process.env.TRADIE_PHONE_NUMBER; if (!from) return res.status(400).send('Missing caller number'); const convo = conversations[from]; if (convo && convo.type === 'voicemail' && convo.transcription) { console.log(ℹ️ Skipping constant follow-up for ${from} because voicemail already handled); return res.status(200).send('Voicemail already handled'); } if (['no-answer', 'busy'].includes(callStatus)) { try { const introMsg = G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.; await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from }); conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false }; await client.messages.create({ body: ⚠️ Missed call from ${from}. Assistant sent initial follow-up., from: process.env.TWILIO_PHONE, to: tradieNumber }); console.log(✅ Missed call handled for ${from}); } catch (err) { console.error('❌ Error handling call-status:', err.message); } } res.status(200).send('Call status processed'); });
+// ================= Call-status handler (missed/busy) =================
+app.post('/call-status', async (req, res) => {
+  const callStatus = req.body.CallStatus;
+  const from = formatPhone(req.body.From || '');
+  const tradieNumber = process.env.TRADIE_PHONE_NUMBER;
+  if (!from) return res.status(400).send('Missing caller number');
+
+  const convo = conversations[from];
+  if (convo && convo.type === 'voicemail' && convo.transcription) {
+    console.log(`ℹ️ Skipping constant follow-up for ${from} because voicemail already handled`);
+    return res.status(200).send('Voicemail already handled');
+  }
+
+  if (['no-answer', 'busy'].includes(callStatus)) {
+    try {
+      const introMsg = `G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
+      await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
+
+      conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false };
+
+      await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
+      console.log(`✅ Missed call handled for ${from}`);
+    } catch (err) {
+      console.error('❌ Error handling call-status:', err.message);
+    }
+  }
+  res.status(200).send('Call status processed');
+});
 
 // ================= Voice handler =================
 app.post('/voice', (req, res) => {
   const response = new twilio.twiml.VoiceResponse();
   response.say("Hi! The tradie is unavailable. Leave a message after the beep.");
-  response.record({ 
-    maxLength: 60, 
-    playBeep: true, 
-    transcribe: true, 
-    transcribeCallback: process.env.BASE_URL + '/voicemail' 
+  response.record({
+    maxLength: 60,
+    playBeep: true,
+    transcribe: true,
+    transcribeCallback: process.env.BASE_URL + '/voicemail'
   });
   response.hangup();
   res.type('text/xml').send(response.toString());
@@ -175,16 +201,19 @@ app.post('/voicemail', async (req, res) => {
   if (!from) return res.status(400).send('Missing caller number');
 
   let transcription = '[Unavailable]';
-  try { transcription = await transcribeRecording(recordingUrl); } 
-  catch (err) { console.error('❌ Transcription failed:', err.message); }
+  try {
+    transcription = await transcribeRecording(recordingUrl);
+  } catch (err) {
+    console.error('❌ Transcription failed:', err.message);
+  }
 
   conversations[from] = { step: 'awaiting_details', transcription, type: 'voicemail' };
 
   try {
-    await client.messages.create({ 
-      body: `🎙️ Voicemail from ${from}: "${transcription}"`, 
-      from: process.env.TWILIO_PHONE, 
-      to: tradieNumber 
+    await client.messages.create({
+      body: `🎙️ Voicemail from ${from}: "${transcription}"`,
+      from: process.env.TWILIO_PHONE,
+      to: tradieNumber
     });
 
     const gptResp = await openai.chat.completions.create({
@@ -259,7 +288,9 @@ Waiting for call time...`,
           ]
         });
         proposedTime = gptResp.choices[0].message.content.trim();
-      } catch (err) { console.error(err); }
+      } catch (err) {
+        console.error(err);
+      }
     }
 
     if (proposedTime) {
@@ -286,7 +317,9 @@ Call at ${proposedTime}`,
           ]
         });
         reply = gptResp.choices[0].message.content.trim();
-      } catch (err) { console.error(err); }
+      } catch (err) {
+        console.error(err);
+      }
     }
   }
 
