@@ -121,7 +121,7 @@ app.post('/send-sms', smsLimiter, async (req, res) => {
   }
 });
 
-// ================= Call-status handler (missed/busy) =================
+// ================= Call-status handler (missed/busy/completed) =================
 app.post('/call-status', async (req, res) => {
   const callStatus = req.body.CallStatus;
   const from = formatPhone(req.body.From || '');
@@ -134,19 +134,27 @@ app.post('/call-status', async (req, res) => {
     return res.status(200).send('Voicemail already handled');
   }
 
-  if (['no-answer', 'busy'].includes(callStatus)) {
+  // Catch no-answer, busy, or completed (no voicemail left)
+  if (['no-answer', 'busy', 'completed'].includes(callStatus)) {
     try {
       const introMsg = `G’day, this is ${process.env.TRADIE_NAME} from ${process.env.TRADES_BUSINESS}. Can I grab your name and whether you’re after a quote, booking, or something else? If you’d like, we can schedule a call between 1-3 pm. Cheers.`;
+      
       await client.messages.create({ body: introMsg, from: process.env.TWILIO_PHONE, to: from });
 
       conversations[from] = { step: 'awaiting_details', type: 'missed_call', tradie_notified: false };
 
-      await client.messages.create({ body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, from: process.env.TWILIO_PHONE, to: tradieNumber });
-      console.log(`✅ Missed call handled for ${from}`);
+      await client.messages.create({ 
+        body: `⚠️ Missed call from ${from}. Assistant sent initial follow-up.`, 
+        from: process.env.TWILIO_PHONE, 
+        to: tradieNumber 
+      });
+
+      console.log(`✅ Missed call handled for ${from} (status: ${callStatus})`);
     } catch (err) {
       console.error('❌ Error handling call-status:', err.message);
     }
   }
+
   res.status(200).send('Call status processed');
 });
 
